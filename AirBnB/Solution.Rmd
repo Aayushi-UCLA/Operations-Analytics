@@ -1,0 +1,265 @@
+---
+title: "Final Exam_Problem 4- Airbnb quality screening"
+author: "Aayushi Agarwal"
+date: "06/09/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+## Part 1: An initial model
+
+```{r}
+
+AirBnB_df <- read.csv("listings-small.csv")
+
+```
+
+
+```{r}
+
+library(caTools)
+set.seed(88)
+
+Split= sample.split(AirBnB_df$low_quality, SplitRatio = 0.6)
+
+AirBnB_train_df = AirBnB_df[Split,]
+AirBnB_test_df = AirBnB_df[!Split,]
+
+```
+
+```{r}
+
+logitReg_model_1 = glm(low_quality ~ bed_type + room_type + property_type + host_response_time , data = AirBnB_train_df, family = "binomial")
+
+summary(logitReg_model_1)
+
+```
+
+
+```{r}
+
+airbnb.predict = predict(logitReg_model_1, newdata=AirBnB_test_df, type="response")
+#summary(airbnb.predict)
+
+library(caret)
+threshold=0.5
+predicted_values<-ifelse(airbnb.predict>=threshold,1,0)
+actual_values<-AirBnB_test_df$low_quality
+conf_matrix<-table(predicted_values,actual_values)
+
+conf_matrix
+accuracy = sum( diag(conf_matrix)) / sum(conf_matrix)
+accuracy #0.9266
+
+```
+
+
+```{r}
+#4.1.b
+library(ROCR)
+
+ROCpred = prediction(airbnb.predict, AirBnB_test_df$low_quality)
+ROCperf = performance(ROCpred, "tpr", "fpr")
+
+plot(ROCperf, main = "Receiver Operator Characteristic Curve")
+
+ROCperf@y.values
+
+
+```
+
+
+
+```{r}
+
+#4.1.c
+
+sensitivity(conf_matrix) #0.9918
+specificity(conf_matrix) #0.01754
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+?? a) Using the variables bed type, room type, property type and host response time, construct a logistic regression model. What is the test set accuracy of your model? (Use a threshold of 0.5.) 
+Ans - 0.9330593
+
+b) Suppose that Airbnb would like to ensure that for any low quality listing, there should be an approximately 80% chance that the model correctly ﬂags it as a low quality listing. If we used our model to ﬂag low quality listings in accordance with this requirement, what is the probability that the model would incorrectly ﬂag a “good” listing? Give the lowest such value that would meet the 80% requirement; an approximate answer is OK. Explain your answer.
+
+c) Airbnb currently uses a diﬀerent method for ﬂagging low quality listings. This method achieves a sensitivity of 30% and speciﬁcity of 80%. Does our model improve on this existing model? Explain your answer.
+
+
+
+## Part 2: A better model
+
+
+```{r}
+
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+```
+
+
+```{r}
+library(ROCR)
+library(caret)
+
+##CART Classification Tree with cp = 0
+
+airbnb.rpart = rpart(low_quality ~ accommodates+bathrooms+bed_type+bedrooms+beds+cancellation_policy+extra_people+host_is_superhost+host_response_rate+host_response_time+id+maximum_nights+minimum_nights+number_of_reviews+property_type+price+room_type, data = AirBnB_train_df)
+
+# Plot tree using prp():
+prp(airbnb.rpart, extra= 1)
+
+airbnb.predict = predict(airbnb.rpart, newdata = AirBnB_test_df)
+
+confMat = table(AirBnB_test_df$low_quality, airbnb.predict >= 0.5)
+confMat
+
+accuracy_rpart = sum(diag(confMat)) / nrow(AirBnB_test_df)
+accuracy_rpart 
+
+pred = prediction(airbnb.predict, AirBnB_test_df$low_quality)
+AUC = as.numeric( performance(pred, "auc")@y.values)
+AUC 
+
+
+```
+
+
+```{r}
+
+##CART with CV & CP parameter
+
+#Set CV folds to 10 fold
+folds = trainControl(method = "cv", number = 10)
+
+# Next, we provide a grid of cp values to evaluate:
+cpValues = expand.grid(.cp = seq(0.01,0.5,0.01)) 
+
+#set seed
+set.seed(88)
+
+#Train CV 
+train.result = train(low_quality ~ accommodates+bathrooms+bed_type+bedrooms+beds+cancellation_policy+extra_people+host_is_superhost+host_response_rate+host_response_time+id+maximum_nights+minimum_nights+number_of_reviews+property_type+price+room_type, data = AirBnB_train_df, method = "rpart", trControl = folds, tuneGrid = cpValues)
+
+#Best CP
+train.result$bestTune
+
+#Running with optimal CP
+airbnb.rpart.cv = rpart(low_quality ~ accommodates+bathrooms+bed_type+bedrooms+beds+cancellation_policy+extra_people+host_is_superhost+host_response_rate+host_response_time+id+maximum_nights+minimum_nights+number_of_reviews+property_type+price+room_type, data = AirBnB_train_df, cp=0.05)
+
+prp(airbnb.rpart.cv)
+
+
+```
+
+
+
+```{r}
+
+airbnb.predict.cv = predict(airbnb.rpart.cv, newdata = AirBnB_test_df)
+confMat = table(AirBnB_test_df$low_quality, airbnb.predict.cv >= 0.5)
+confMat
+
+accuracy_rpart_cv = sum(diag(confMat)) / nrow(AirBnB_test_df)
+accuracy_rpart_cv
+
+pred = prediction(airbnb.predict.cv, AirBnB_test_df$low_quality)
+AUC = as.numeric( performance(pred, "auc")@y.values)
+AUC 
+
+```
+
+
+```{r}
+
+## Random Forest
+
+#Changinf to factor for "classification" model
+
+AirBnB_train_df_ = AirBnB_train_df
+AirBnB_test_df_ = AirBnB_test_df
+AirBnB_train_df_$low_quality = as.factor(AirBnB_train_df_$low_quality)
+AirBnB_test_df_$low_quality = as.factor(AirBnB_test_df_$low_quality)
+
+
+set.seed(88)
+airbnb.rf = randomForest(low_quality ~ accommodates+bathrooms+bed_type+bedrooms+beds+cancellation_policy+extra_people+host_response_rate+host_response_time+id+maximum_nights+minimum_nights+number_of_reviews+property_type+price+room_type, data = AirBnB_train_df_, nodesize=10, mtry=50)
+
+importance(airbnb.rf)
+```
+
+
+
+```{r}
+
+airbnb.predict = predict(airbnb.rf, newdata = AirBnB_test_df_, type = "prob")
+airbnb.predict = airbnb.predict[,2]
+
+confMat = table(AirBnB_test_df_$low_quality, airbnb.predict >= 0.2)
+confMat
+
+accuracy_rf = sum(diag(confMat))/nrow(AirBnB_test_df_)
+accuracy_rf 
+
+pred = prediction(airbnb.predict, AirBnB_test_df_$low_quality)
+AUC = as.numeric( performance(pred, "auc")@y.values)
+AUC 
+
+sensitivity = 36 / (36+78)
+sensitivity
+
+Specificity = 1453/ (1453+136)
+Specificity
+
+
+```
+
+
+
+```{r}
+
+ROCpred = prediction(airbnb.predict, AirBnB_test_df_$low_quality)
+ROCperf = performance(ROCpred, "tpr", "fpr")
+
+plot(ROCperf, main = "Receiver Operator Characteristic Curve", 
+     colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.05), text.adj=c(-0.2,1.7)) 
+
+
+```
+
+
+a) What type of model is your ﬁnal model?
+
+b) Which variables/features did you use to build your model?
+
+c) What does your model suggest about which variables/features are predictive of a listing’s quality?
+
+d) What process did you use to arrive to your ﬁnal model?
+
+e) Why should Airbnb use your model? (What is the predictive performance of your ﬁnal model? Does your model have other advantages, besides its predictive performance?)
+
+f) What weaknesses, if any, does your model have?
+
+
+
+
+
+
